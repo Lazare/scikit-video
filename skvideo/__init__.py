@@ -11,11 +11,11 @@ import numpy as np
 # found.
 
 def which(command):
-  candidates = where(command)
-  if len(candidates) > 0:
-    return os.path.split(candidates[0])[0]
-  else:
-    return ""
+    candidates = where(command)
+    if len(candidates) > 0:
+        return os.path.split(candidates[0])[0]
+    else:
+        return ""
 
 
 # only ffprobe exists with ffmpeg
@@ -36,8 +36,9 @@ _FFMPEG_MAJOR_VERSION = "0"
 _FFMPEG_MINOR_VERSION = "0"
 _FFMPEG_PATCH_VERSION = "0"
 
-_FFMPEG_SUPPORTED_DECODERS = []
-_FFMPEG_SUPPORTED_ENCODERS = []
+_FFMPEG_SUPPORTED_DECODERS  = []
+_FFMPEG_SUPPORTED_ENCODERS  = []
+_FFMPEG_SUPPORTED_INPUT_PROTOCOLS = []
 _LIBAV_SUPPORTED_EXT = []
 
 _FFPROBE_APPLICATION = "ffprobe"
@@ -60,11 +61,13 @@ def scan_ffmpeg():
     global _FFMPEG_PATCH_VERSION
     global _FFMPEG_SUPPORTED_DECODERS
     global _FFMPEG_SUPPORTED_ENCODERS
+    global _FFMPEG_SUPPORTED_INPUT_PROTOCOLS
     _FFMPEG_MAJOR_VERSION = "0"
     _FFMPEG_MINOR_VERSION = "0"
     _FFMPEG_PATCH_VERSION = "0"
-    _FFMPEG_SUPPORTED_DECODERS = []
-    _FFMPEG_SUPPORTED_ENCODERS = []
+    _FFMPEG_SUPPORTED_DECODERS  = []
+    _FFMPEG_SUPPORTED_ENCODERS  = []
+    _FFMPEG_SUPPORTED_INPUT_PROTOCOLS = []
     try:
         # grab program version string
         version = check_output([os.path.join(_FFMPEG_PATH, _FFMPEG_APPLICATION), "-version"])
@@ -224,6 +227,11 @@ def scan_ffmpeg():
         b'.raw'
     ]
 
+    _FFMPEG_SUPPORTED_INPUT_PROTOCOLS = [
+        b'async', b'bluray', b'cache', b'concat', b'crypto', b'data', b'ffrtmpcrypt', b'ffrtmphttp', b'file',
+        b'ftp', b'gopher', b'hls', b'http', b'httpproxy', b'https', b'mmsh', b'mmst', b'pipe', b'rtmp', b'rtmpe',
+        b'rtmps', b'rtmpt', b'rtmpte', b'rtmpts', b'rtp', b'srtp', b'subfile', b'tcp', b'tls', b'udp', b'udplite'
+    ]
 
 def scan_libav():
     global _LIBAV_MAJOR_VERSION

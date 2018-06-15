@@ -59,17 +59,15 @@ def vwrite(fname, videodata, inputdict=None, outputdict=None, backend='ffmpeg', 
         # check if FFMPEG exists in the path
         assert _HAS_FFMPEG, "Cannot find installation of real FFmpeg (which comes with ffprobe)."
 
-        writer = FFmpegWriter(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity)
-        for t in range(T):
-            writer.writeFrame(videodata[t])
-        writer.close()
+        with FFmpegWriter(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity) as writer:
+            for t in range(T):
+                writer.writeFrame(videodata[t])
     elif backend == "libav":
         # check if FFMPEG exists in the path
         assert _HAS_AVCONV, "Cannot find installation of libav."
-        writer = LibAVWriter(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity)
-        for t in range(T):
-            writer.writeFrame(videodata[t])
-        writer.close()
+        with LibAVWriter(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity) as writer:
+            for t in range(T):
+                writer.writeFrame(videodata[t])
     else:
         raise NotImplemented
 
@@ -141,16 +139,15 @@ def vread(fname, height=0, width=0, num_frames=0, as_grey=False, inputdict=None,
         if as_grey:
             outputdict['-pix_fmt'] = 'gray'
 
-        reader = FFmpegReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity)
-        T, M, N, C = reader.getShape()
+        with FFmpegReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity) as reader:
+            T, M, N, C = reader.getShape()
 
-        videodata = np.empty((T, M, N, C), dtype=reader.dtype)
-        for idx, frame in enumerate(reader.nextFrame()):
-            videodata[idx, :, :, :] = frame
+            videodata = np.empty((T, M, N, C), dtype=reader.dtype)
+            for idx, frame in enumerate(reader.nextFrame()):
+                videodata[idx, :, :, :] = frame
 
-        if as_grey:
-            videodata = vshape(videodata[:, :, :, 0])
-        reader.close()
+            if as_grey:
+                videodata = vshape(videodata[:, :, :, 0])
 
         return videodata
     elif backend == "libav":
@@ -163,14 +160,13 @@ def vread(fname, height=0, width=0, num_frames=0, as_grey=False, inputdict=None,
         if num_frames != 0:
             outputdict['-vframes'] = str(num_frames)
 
-        reader = LibAVReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity)
-        T, M, N, C = reader.getShape()
+        with LibAVReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity) as reader:
+            T, M, N, C = reader.getShape()
 
-        videodata = np.empty((T, M, N, C), dtype=reader.dtype)
-        for idx, frame in enumerate(reader.nextFrame()):
-            videodata[idx, :, :, :] = frame
+            videodata = np.empty((T, M, N, C), dtype=reader.dtype)
+            for idx, frame in enumerate(reader.nextFrame()):
+                videodata[idx, :, :, :] = frame
 
-        reader.close()
         return videodata
 
     else:
@@ -248,15 +244,12 @@ def vreader(fname, height=0, width=0, num_frames=0, as_grey=False, inputdict=Non
         if as_grey:
             outputdict['-pix_fmt'] = 'gray'
 
-        reader = FFmpegReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity)
-        try:
+        with FFmpegReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity) as reader:
             for frame in reader.nextFrame():
                 if as_grey:
                     yield vshape(frame[:, :, 0])
                 else:
                     yield frame
-        finally:
-            reader.close()
 
     elif backend == "libav":
         # check if FFMPEG exists in the path
@@ -268,12 +261,9 @@ def vreader(fname, height=0, width=0, num_frames=0, as_grey=False, inputdict=Non
         if num_frames != 0:
             outputdict['-vframes'] = str(num_frames)
 
-        reader = LibAVReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity)
-        try:
+        with LibAVReader(fname, inputdict=inputdict, outputdict=outputdict, verbosity=verbosity) as reader:
             for frame in reader.nextFrame():
                 yield frame
-        finally:
-            reader.close()
 
     else:
         raise NotImplemented

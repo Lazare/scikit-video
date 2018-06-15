@@ -3,9 +3,9 @@ import time
 import warnings
 
 import numpy as np
-
 from .. import _HAS_FFMPEG
 from ..utils import *
+import re
 
 
 class VideoReaderAbstract(object):
@@ -52,8 +52,6 @@ class VideoReaderAbstract(object):
         none
 
         """
-        # check if FFMPEG exists in the path
-        assert _HAS_FFMPEG, "Cannot find installation of real FFmpeg (which comes with ffprobe)."
 
         self._filename = filename
 
@@ -141,9 +139,9 @@ class VideoReaderAbstract(object):
         if ("-vframes" in outputdict):
             self.inputframenum = np.int(outputdict["-vframes"])
         elif ("-r" in outputdict):
-            inputfps = np.int(outputdict["-r"])
+            outputfps = np.float(outputdict["-r"])
             inputduration = np.float(viddict[self.INFO_DURATION])
-            self.inputframenum = np.int(round(inputfps * inputduration) + 1)
+            self.inputframenum = self._getResampledNumberofFrames(self.inputfps, outputfps, inputduration)
         elif (self.INFO_NB_FRAMES in viddict):
             self.inputframenum = np.int(viddict[self.INFO_NB_FRAMES])
         elif israw:
@@ -162,11 +160,17 @@ class VideoReaderAbstract(object):
         if israw or iswebcam:
             inputdict['-pix_fmt'] = self.pix_fmt
         else:
-            decoders = self._getSupportedDecoders()
-            if decoders != NotImplemented:
-                # check that the extension makes sense
-                assert str.encode(
-                    self.extension).lower() in decoders, "Unknown decoder extension: " + self.extension.lower()
+            protocols = self._getSupportedInputProtocols()
+            if protocols is NotImplemented or len(protocols) < 1:
+                isFile = True
+            else:
+                isFile = filename[0:5] == 'file:' or re.match('^{}:'.format(b'|'.join(protocols)), filename) is not None
+            if isFile:
+                decoders = self._getSupportedDecoders()
+                if decoders != NotImplemented:
+                    # check that the extension makes sense
+                    assert str.encode(
+                        self.extension).lower() in decoders, "Unknown decoder extension: " + self.extension.lower()
 
         if '-f' not in outputdict:
             outputdict['-f'] = self.OUTPUT_METHOD
@@ -210,12 +214,18 @@ class VideoReaderAbstract(object):
     def _getSupportedDecoders(self):
         return NotImplemented
 
+    def _getSupportedInputProtocols(self):
+        return NotImplemented
+
     def _dict2Args(self, dict):
         args = []
         for key in dict.keys():
             args.append(key)
             args.append(dict[key])
         return args
+
+    def _getResampledNumberofFrames(self, inputfps, outputfps,  inputduration):
+        return np.int(round(outputfps * (inputduration - 1.0 / inputfps)) + 2)
 
     def getShape(self):
         """Returns a tuple (T, M, N, C)
@@ -250,7 +260,7 @@ class VideoReaderAbstract(object):
             if self._proc.poll() is not None:
                 break
 
-    def _read_frame_data(self):
+    def _readFrame(self):
         # Init and check
         framesize = self.outputdepth * self.outputwidth * self.outputheight
         assert self._proc is not None
@@ -258,16 +268,14 @@ class VideoReaderAbstract(object):
         try:
             # Read framesize bytes
             arr = np.frombuffer(self._proc.stdout.read(framesize * self.dtype.itemsize), dtype=self.dtype)
+            if len(arr) == 0:
+                return None
             assert len(arr) == framesize
         except Exception as err:
             self._terminate()
             err1 = str(err)
             raise RuntimeError("%s" % (err1,))
-        return arr
-
-    def _readFrame(self):
-        # Read and convert to numpy array
-        self._lastread = self._read_frame_data().reshape((self.outputheight, self.outputwidth, self.outputdepth))
+        self._lastread = arr.reshape((self.outputheight, self.outputwidth, self.outputdepth))
         return self._lastread
 
     def nextFrame(self):
@@ -279,10 +287,18 @@ class VideoReaderAbstract(object):
         """
         if self.inputframenum == 0:
             while True:
-                yield self._readFrame()
+                frame = self._readFrame()
+                if frame is None:
+                    break
+                else:
+                    yield frame
         else:
             for i in range(self.inputframenum):
-                yield self._readFrame()
+                frame = self._readFrame()
+                if frame is None:
+                    break
+                else:
+                    yield frame
 
     def __enter__(self):
         return self
@@ -351,6 +367,7 @@ class VideoWriterAbstract(object):
         if "-f" not in self.inputdict:
             self.inputdict["-f"] = "rawvideo"
         self.warmStarted = False
+        self._instancePrepareData = self._prepareData
 
     def _warmStart(self, M, N, C, dtype):
         self.warmStarted = True
@@ -457,8 +474,8 @@ class VideoWriterAbstract(object):
 
         vid = vid.clip(0, (1 << (self.dtype.itemsize << 3)) - 1).astype(self.dtype)
 
-        vid = self._prepareData(vid)
-        T, M, N, C = vid.shape # in case of hack ine prepareData to change the image shape (gray2RGB in libAV for exemple)
+        vid = self._instancePrepareData(vid)
+        T, M, N, C = vid.shape # in case of hack in instancePrepareData to change the image shape (gray2RGB in libAV for exemple)
 
         # Check size of image
         if M != self.inputheight or N != self.inputwidth:

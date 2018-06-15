@@ -10,6 +10,7 @@ a wide range of video formats.
 import subprocess as sp
 
 import numpy as np
+from math import floor
 
 from .abstract import VideoReaderAbstract, VideoWriterAbstract
 from .avprobe import avprobe
@@ -65,6 +66,9 @@ class LibAVReader(VideoReaderAbstract):
     def _probe(self):
         return avprobe(self._filename)
 
+    def _getResampledNumberofFrames(self, inputfps, outputfps, inputduration):
+        return np.int(round(outputfps * (inputduration - 1.0/inputfps)) + 1)
+
 
 class LibAVWriter(VideoWriterAbstract):
     """Writes frames using libav
@@ -112,5 +116,5 @@ class LibAVWriter(VideoWriterAbstract):
             raise ValueError('libAV doesnt support rgba64 formats')
         if C < 3 and "-pix_fmt" not in self.inputdict: # pix_fmt gray, ya8 and their 16 bit equivalents have a bug in LibAV
             C += 2
-            self._prepareData = self._gray2RGB #replace prepareData methode by the gray2RGB hack method
+            self._instancePrepareData = self._gray2RGB #replace prepareData methode by the gray2RGBhack method only for this instance
         super(LibAVWriter,self)._warmStart(M, N, C, dtype)

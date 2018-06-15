@@ -17,6 +17,7 @@ from .. import _FFMPEG_APPLICATION
 from .. import _FFMPEG_PATH
 from .. import _FFMPEG_SUPPORTED_DECODERS
 from .. import _FFMPEG_SUPPORTED_ENCODERS
+from .. import _FFMPEG_SUPPORTED_INPUT_PROTOCOLS
 from .. import _HAS_FFMPEG
 from ..utils import *
 
@@ -75,6 +76,9 @@ class FFmpegReader(VideoReaderAbstract):
 
     def _getSupportedDecoders(self):
         return _FFMPEG_SUPPORTED_DECODERS
+
+    def _getSupportedInputProtocols(self):
+        return _FFMPEG_SUPPORTED_INPUT_PROTOCOLS
 
 class FFmpegWriter(VideoWriterAbstract):
     """Writes frames using FFmpeg
