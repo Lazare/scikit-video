@@ -12,7 +12,7 @@ import subprocess as sp
 import numpy as np
 from math import floor
 
-from .abstract import VideoReaderAbstract, VideoWriterAbstract
+from .abstract import VideoReaderAbstract, VideoWriterAbstract, dict2Args
 from .avprobe import avprobe
 from .. import _AVCONV_APPLICATION
 from .. import _AVCONV_PATH
@@ -41,8 +41,8 @@ class LibAVReader(VideoReaderAbstract):
         super(LibAVReader,self).__init__(*args, **kwargs)
 
     def _createProcess(self, inputdict, outputdict, verbosity):
-        iargs = self._dict2Args(inputdict)
-        oargs = self._dict2Args(outputdict)
+        iargs = dict2Args(inputdict)
+        oargs = dict2Args(outputdict)
 
         if verbosity == 0:
             cmd = [_AVCONV_PATH + "/" + _AVCONV_APPLICATION, "-nostats", "-loglevel", "0"] + iargs + ['-i',
@@ -66,7 +66,7 @@ class LibAVReader(VideoReaderAbstract):
     def _probe(self):
         return avprobe(self._filename)
 
-    def _getResampledNumberofFrames(self, inputfps, outputfps, inputduration):
+    def _getResampledNumberOfFrames(self, inputfps, outputfps, inputduration):
         return np.int(round(outputfps * (inputduration - 1.0/inputfps)) + 1)
 
 
@@ -82,8 +82,8 @@ class LibAVWriter(VideoWriterAbstract):
         super(LibAVWriter,self).__init__(*args, **kwargs)
 
     def _createProcess(self, inputdict, outputdict, verbosity):
-        iargs = self._dict2Args(inputdict)
-        oargs = self._dict2Args(outputdict)
+        iargs = dict2Args(inputdict)
+        oargs = dict2Args(outputdict)
 
         cmd = [_AVCONV_PATH + "/avconv", "-y"] + iargs + ["-i", "pipe:"] + oargs + [self._filename]
 

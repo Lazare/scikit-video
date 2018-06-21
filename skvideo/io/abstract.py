@@ -3,12 +3,84 @@ import time
 import warnings
 
 import numpy as np
-from .. import _HAS_FFMPEG
 from ..utils import *
 import re
+import sys
 
 
-class VideoReaderAbstract(object):
+def getPixFmtInfos(pixfmt):
+    if pixfmt not in bpplut:
+        if pixfmt + endianess('le', 'be') in bpplut:
+            pixfmt += endianess('le', 'be')
+        else:
+            raise ValueError(pixfmt + 'is not a valid pix_fmt')
+    depth = np.int(bpplut[pixfmt][0])
+    bpp = np.int(bpplut[pixfmt][1])
+    bpc = bpp // depth
+    if bpc == 8:
+        dtype = np.dtype('u1')  # np.uint8
+    elif bpc == 16:
+        suffix = pixfmt[-2:]
+        if suffix == 'le':
+            dtype = np.dtype('<u2')
+        elif suffix == 'be':
+            dtype = np.dtype('>u2')
+        else:
+            raise ValueError(pixfmt + 'is strange it\'s 16 bits per channels but is neither "le" nor "be"')
+    else:
+        dtype = None
+    return depth, bpp, dtype, pixfmt
+
+def endianess(little='little', big='big'):
+    return little if sys.byteorder == 'little' else big
+
+
+def decodeFrameRate(framerate, default):
+    if re.match(r'\d+(?:\.\d+)?(?:/\d+(?:\.\d+)?)?', framerate) is None:
+        raise ValueError("{} sould be numeric or numeric/numeric".format(framerate))
+    parts = framerate.split('/')
+    if len(parts) > 1:
+        if np.float(parts[1]) == 0.:
+            return default
+        else:
+            return np.float(parts[0]) / np.float(parts[1])
+    else:
+        return np.float(framerate)
+
+def decodeFrameSize(size):
+    parts = size.split('x')
+    return np.int(parts[0]), np.int(parts[1])
+
+def dict2Args(dict):
+    args = []
+    for key in dict.keys():
+        args.append(key)
+        args.append(dict[key])
+    return args
+
+def getRotation(vidDict):
+    if ('tag' in vidDict):
+        tagdata = vidDict['tag']
+        if not isinstance(tagdata, list):
+            tagdata = [tagdata]
+
+        for tags in tagdata:
+            if tags['@key'] == 'rotate':
+                return tags['@value']
+    return '0'
+
+
+class VideoAbstract(object):
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+class VideoReaderAbstract(VideoAbstract):
     """Reads frames
     """
 
@@ -22,7 +94,7 @@ class VideoReaderAbstract(object):
     DEFAULT_INPUT_PIX_FMT = "yuvj444p"
     OUTPUT_METHOD = None # "rawvideo"
 
-    def __init__(self, filename, inputdict=None, outputdict=None, verbosity=0):
+    def __init__(self, filename=None, inputdict=None, outputdict=None, verbosity=0):
         """Initializes FFmpeg in reading mode with the given parameters
 
         During initialization, additional parameters about the video file
@@ -53,58 +125,65 @@ class VideoReaderAbstract(object):
 
         """
 
-        self._filename = filename
-
         if not inputdict:
             inputdict = {}
 
         if not outputdict:
             outputdict = {}
 
-        # General information
-        _, self.extension = os.path.splitext(filename)
-        self.size = os.path.getsize(filename)
-        self.probeInfo = self._probe()
-
-        # smartphone video data is weird
-        self.rotationAngle = '0' #specific FFMPEG
-
-        viddict = {}
-        if "video" in self.probeInfo:
-            viddict = self.probeInfo["video"]
-
-        self.inputfps = -1
-        if ("-r" in inputdict):
-            self.inputfps = np.int(inputdict["-r"])
-        elif self.INFO_AVERAGE_FRAMERATE in viddict:
-            # check for the slash
-            frtxt = viddict[self.INFO_AVERAGE_FRAMERATE]
-            parts = frtxt.split('/')
-            if len(parts) > 1:
-                if np.float(parts[1]) == 0.:
-                    self.inputfps = self.DEFAULT_FRAMERATE
-                else:
-                    self.inputfps = np.float(parts[0]) / np.float(parts[1])
-            else:
-                self.inputfps = np.float(frtxt)
+        # define the kind of input
+        protocols = self._getSupportedInputProtocols()
+        if protocols is NotImplemented or len(protocols) < 1:
+            isFile =True
+        elif filename[0:5] == 'file:':
+            filename = filename[5:]
+            isFile = True
+        elif re.match('^{}:'.format(b'|'.join(protocols)), filename) is not None:
+            isFile = False
         else:
-            self.inputfps = self.DEFAULT_FRAMERATE
+            isFile = True
 
-        # check for transposition tag
-        if ('tag' in viddict):
-            tagdata = viddict['tag']
-            if not isinstance(tagdata, list):
-                tagdata = [tagdata]
+        self._filename = filename
+        _, extension = os.path.splitext(filename)
 
-            for tags in tagdata:
-                if tags['@key'] == 'rotate':
-                    self.rotationAngle = tags['@value']
+        if isFile:
+            isRawWebCam = re.match(r'/dev/video\d+', filename) is not None
+            size = 0 if isRawWebCam else os.path.getsize(filename)
+            israw = isRawWebCam or str.encode(extension) in [b".raw", b".yuv"]
+            if not israw:
+                decoders = self._getSupportedDecoders()
+                if decoders != NotImplemented:
+                    # check that the extension makes sense
+                    assert str.encode(
+                        extension).lower() in decoders, "Unknown decoder extension: " + extension.lower()
+
+        else:
+            israw = False
+
+        if israw:
+            viddict = {}
+        else:
+            probeInfo = self._probe()
+            if "video" in probeInfo:
+                viddict = probeInfo["video"]
+            else:
+                viddict = {}
+
+
+        #---------- input options --------------------
+
+        if ("-r" in inputdict):
+            inputfps = decodeFrameRate(inputdict["-r"], default=self.DEFAULT_FRAMERATE)
+        elif self.INFO_AVERAGE_FRAMERATE in viddict:
+            inputfps = decodeFrameRate(viddict[self.INFO_AVERAGE_FRAMERATE], default=self.DEFAULT_FRAMERATE)
+        else:
+            inputfps = self.DEFAULT_FRAMERATE
+            if israw and "-r" in outputdict: # if resampling of the framerate is activated in the output set the input framerate to default for raw files
+                inputdict["-r"] = inputfps
 
         # if we don't have width or height at all, raise exception
         if ("-s" in inputdict):
-            widthheight = inputdict["-s"].split('x')
-            self.inputwidth = np.int(widthheight[0])
-            self.inputheight = np.int(widthheight[1])
+            self.inputwidth, self.inputheight = decodeFrameSize(inputdict["-s"])
         elif ((self.INFO_WIDTH in viddict) and (self.INFO_HEIGHT in viddict)):
             self.inputwidth = np.int(viddict[self.INFO_WIDTH])
             self.inputheight = np.int(viddict[self.INFO_HEIGHT])
@@ -112,65 +191,54 @@ class VideoReaderAbstract(object):
             raise ValueError(
                 "No way to determine width or height from video. Need `-s` in `inputdict`. Consult documentation on I/O.")
 
+        # smartphone video data is weird
         # smartphone recordings seem to store data about rotations
         # in tag format. Just swap the width and height
-        if self.rotationAngle == '90' or self.rotationAngle == '270':
+        if getRotation(viddict) in ['90','270']:
             self.inputwidth, self.inputheight = self.inputheight, self.inputwidth
 
-        self.bpp = -1  # bits per pixel
-        self.pix_fmt = ""
-        # completely unsure of this:
         if ("-pix_fmt" in inputdict):
-            self.pix_fmt = inputdict["-pix_fmt"]
+            input_pix_fmt = inputdict["-pix_fmt"]
         elif (self.INFO_PIX_FMT in viddict):
-            # parse this bpp
-            self.pix_fmt = viddict[self.INFO_PIX_FMT]
+            input_pix_fmt = viddict[self.INFO_PIX_FMT]
         else:
-            self.pix_fmt = self.DEFAULT_INPUT_PIX_FMT
+            input_pix_fmt = self.DEFAULT_INPUT_PIX_FMT
             if verbosity != 0:
                 warnings.warn("No input color space detected. Assuming {}.".format(self.DEFAULT_INPUT_PIX_FMT), UserWarning)
 
-        self.inputdepth = np.int(bpplut[self.pix_fmt][0])
-        self.bpp = np.int(bpplut[self.pix_fmt][1])
+        if israw:
+            inputdict['-pix_fmt'] = input_pix_fmt
+        self.inputdepth, self.bpp, _, _ = getPixFmtInfos(input_pix_fmt)
 
-        israw = str.encode(self.extension) in [b".raw", b".yuv"]
-        iswebcam = not os.path.isfile(filename)
-
-        if ("-vframes" in outputdict):
-            self.inputframenum = np.int(outputdict["-vframes"])
-        elif ("-r" in outputdict):
-            outputfps = np.float(outputdict["-r"])
-            inputduration = np.float(viddict[self.INFO_DURATION])
-            self.inputframenum = self._getResampledNumberofFrames(self.inputfps, outputfps, inputduration)
-        elif (self.INFO_NB_FRAMES in viddict):
-            self.inputframenum = np.int(viddict[self.INFO_NB_FRAMES])
-        elif israw:
-            # we can compute it based on the input size and color space
-            self.inputframenum = np.int(self.size / (self.inputwidth * self.inputheight * (self.bpp / 8.0)))
-        elif iswebcam:
-            # webcam can stream frames endlessly, lets use the special default value of 0 to indicate that
-            self.inputframenum = 0
+        if self.INFO_NB_FRAMES in viddict:
+            inputFrameNum = np.int(viddict[self.INFO_NB_FRAMES])
+        elif israw and size is not None:
+            inputFrameNum = np.int(size / (self.inputwidth * self.inputheight * (self.bpp / 8.0)))
         else:
-            self.inputframenum = self._probCountFrames()
+            inputFrameNum = None
+
+        #--------- output options --------------------
+
+        if "-r" in outputdict:
+            outputfps = decodeFrameRate(outputdict["-r"], default=self.DEFAULT_FRAMERATE)
+            if self.INFO_DURATION in viddict:
+                duration = np.float(viddict[self.INFO_DURATION])
+            else:
+                duration = float(inputFrameNum) / float(inputfps)
+            self.outputFrameNum = self._getResampledNumberOfFrames(inputfps, outputfps, duration)
+        else:
+            self.outputFrameNum = inputFrameNum
+
+        if "-vframes" in outputdict:
+            self.outputFrameNum = np.int(outputdict["-vframes"]) if self.outputFrameNum is None else min(self.outputFrameNum, np.int(outputdict["-vframes"]))
+        elif "-frames" in outputdict:
+            self.outputFrameNum = np.int(outputdict["-frames"]) if self.outputFrameNum is None else min(self.outputFrameNum, np.int(outputdict["-frames"]))
+        elif self.outputFrameNum is None:
+            self.outputFrameNum = self._probCountFrames()
             if verbosity != 0:
                 warnings.warn(
                     "Cannot determine frame count. Scanning input file, this is slow when repeated many times. Need `-vframes` in inputdict. Consult documentation on I/O.",
                     UserWarning)
-
-        if israw or iswebcam:
-            inputdict['-pix_fmt'] = self.pix_fmt
-        else:
-            protocols = self._getSupportedInputProtocols()
-            if protocols is NotImplemented or len(protocols) < 1:
-                isFile = True
-            else:
-                isFile = filename[0:5] == 'file:' or re.match('^{}:'.format(b'|'.join(protocols)), filename) is not None
-            if isFile:
-                decoders = self._getSupportedDecoders()
-                if decoders != NotImplemented:
-                    # check that the extension makes sense
-                    assert str.encode(
-                        self.extension).lower() in decoders, "Unknown decoder extension: " + self.extension.lower()
 
         if '-f' not in outputdict:
             outputdict['-f'] = self.OUTPUT_METHOD
@@ -179,31 +247,22 @@ class VideoReaderAbstract(object):
             outputdict['-pix_fmt'] = "rgb24"
 
         if '-s' in outputdict:
-            widthheight = outputdict["-s"].split('x')
-            self.outputwidth = np.int(widthheight[0])
-            self.outputheight = np.int(widthheight[1])
+            self.outputwidth, self.outputheight = decodeFrameSize(outputdict["-s"])
         else:
             self.outputwidth = self.inputwidth
             self.outputheight = self.inputheight
 
-        self.outputdepth = np.int(bpplut[outputdict['-pix_fmt']][0])
-        self.outputbpp = np.int(bpplut[outputdict['-pix_fmt']][1])
-        bitpercomponent = self.outputbpp // self.outputdepth
-        if bitpercomponent == 8:
-            self.dtype = np.dtype('u1')  # np.uint8
-        elif bitpercomponent == 16:
-            suffix = outputdict['-pix_fmt'][-2:]
-            if suffix == 'le':
-                self.dtype = np.dtype('<u2')
-            elif suffix == 'be':
-                self.dtype = np.dtype('>u2')
-        else:
+        self.outputdepth ,self.outputbpp, self.dtype, outputdict['-pix_fmt'] = getPixFmtInfos(outputdict['-pix_fmt'])
+        if self.dtype is None:
             raise ValueError(outputdict['-pix_fmt'] + 'is not a valid pix_fmt for numpy conversion')
 
         self._createProcess(inputdict, outputdict, verbosity)
 
     def _createProcess(self, inputdict, outputdict, verbosity):
         pass
+
+    def _getResampledNumberOfFrames(self, inputfps, outputfps, duration):
+        return np.int(round(outputfps * (duration - 1.0 / inputfps)) + 2)
 
     def _probCountFrames(self):
         return NotImplemented
@@ -217,23 +276,13 @@ class VideoReaderAbstract(object):
     def _getSupportedInputProtocols(self):
         return NotImplemented
 
-    def _dict2Args(self, dict):
-        args = []
-        for key in dict.keys():
-            args.append(key)
-            args.append(dict[key])
-        return args
-
-    def _getResampledNumberofFrames(self, inputfps, outputfps,  inputduration):
-        return np.int(round(outputfps * (inputduration - 1.0 / inputfps)) + 2)
-
     def getShape(self):
         """Returns a tuple (T, M, N, C)
 
         Returns the video shape in number of frames, height, width, and channels per pixel.
         """
 
-        return self.inputframenum, self.outputheight, self.outputwidth, self.outputdepth
+        return self.outputFrameNum, self.outputheight, self.outputwidth, self.outputdepth
 
     def close(self):
         if self._proc is not None and self._proc.poll() is None:
@@ -285,7 +334,7 @@ class VideoReaderAbstract(object):
         M is height, N is width, and C is number of channels per pixel.
 
         """
-        if self.inputframenum == 0:
+        if self.outputFrameNum is None:
             while True:
                 frame = self._readFrame()
                 if frame is None:
@@ -293,20 +342,15 @@ class VideoReaderAbstract(object):
                 else:
                     yield frame
         else:
-            for i in range(self.inputframenum):
+            for i in range(self.outputFrameNum):
                 frame = self._readFrame()
                 if frame is None:
                     break
                 else:
                     yield frame
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()
-
-class VideoWriterAbstract(object):
+class VideoWriterAbstract(VideoAbstract):
     """Writes frames
 
     this class provides sane initializations for the default case.
@@ -340,15 +384,16 @@ class VideoWriterAbstract(object):
         self.DEVNULL = open(os.devnull, 'wb')
 
         filename = os.path.abspath(filename)
-        _, self.extension = os.path.splitext(filename)
+        _, extension = os.path.splitext(filename)
+
+        self._filename = filename
 
         # check that the extension makes sense
         encoders = self._getSupportedEncoders()
         if encoders != NotImplemented:
             assert str.encode(
-                self.extension).lower() in encoders, "Unknown encoder extension: " + self.extension.lower()
+                extension).lower() in encoders, "Unknown encoder extension: " + extension.lower()
 
-        self._filename = filename
         basepath, _ = os.path.split(filename)
 
         # check to see if filename is a valid file location
@@ -375,7 +420,7 @@ class VideoWriterAbstract(object):
         if "-pix_fmt" not in self.inputdict:
             # check the number channels to guess
             if dtype.kind == 'u' and dtype.itemsize == 2:
-                suffix = 'le' if dtype.byteorder else 'be'
+                suffix = 'le' if dtype.byteorder == '<' else 'be'
                 if C == 1:
                     if self.NEED_RGB2GRAY_HACK:
                         self.inputdict["-pix_fmt"] = "rgb48" + suffix
@@ -435,7 +480,8 @@ class VideoWriterAbstract(object):
             self.inputheight = M
 
         # prepare output parameters, if raw
-        if self.extension == ".yuv":
+        _, extension = os.path.splitext(self._filename)
+        if extension == ".yuv":
             if "-pix_fmt" not in self.outputdict:
                 self.outputdict["-pix_fmt"] = self.DEFAULT_OUTPUT_PIX_FMT
                 if self.verbosity > 0:
@@ -444,6 +490,7 @@ class VideoWriterAbstract(object):
         self._createProcess(self.inputdict, self.outputdict, self.verbosity)
 
     def _createProcess(self, inputdict, outputdict, verbosity):
+        self._cmd = ''
         pass
 
     def _prepareData(self, data):
@@ -497,16 +544,3 @@ class VideoWriterAbstract(object):
 
     def _getSupportedEncoders(self):
         return NotImplemented
-
-    def _dict2Args(self, dict):
-        args = []
-        for key in dict.keys():
-            args.append(key)
-            args.append(dict[key])
-        return args
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.close()

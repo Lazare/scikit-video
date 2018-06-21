@@ -73,7 +73,7 @@ def test_LibAVReader_aboveversion9_fps():
     assert_equal(accumulation / (T * M * N * C), 109.2392282699489)
 
 @unittest.skipIf(not skvideo._HAS_AVCONV, "LibAV required for this test.")
-def test_LibAVReader_16bits():
+def test_LibAVReader_aboveversion9_16bits():
 
     T = 0
     M = 0
@@ -174,4 +174,44 @@ def _Gray2RGBHack_Helper(pix_fmt):
         for i,frame in enumerate(reader.nextFrame()):
             inputdata[i] = frame * (1<<(bits-8))
     assert_array_less(np.abs(inputdata[:,:,:,0].astype('int32')- outputdata[:,:,:,0].astype('int32')),(1<<(bits-7)))
+    os.remove(outputfile)
+
+@unittest.skipIf(not skvideo._HAS_AVCONV, "LibAV required for this test.")
+def test_LibAVReader_limit_vframe():
+    # generate random data for 5 frames
+    outputfile = sys._getframe().f_code.co_name + ".mp4"
+
+    outputdata = np.random.random(size=(5, 16, 16, 3)) * 255
+    outputdata = outputdata.astype(np.uint8)
+
+    with skvideo.io.LibAVWriter(outputfile) as writer:
+        for i in range(5):
+            writer.writeFrame(outputdata[i])
+
+    with skvideo.io.LibAVReader(outputfile, outputdict={'-vframes':'8'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,5)
+    os.remove(outputfile)
+
+@unittest.skipIf(not skvideo._HAS_AVCONV, "LibAV required for this test.")
+def test_LibAVReader_raw_fps():
+    # generate random data for 5 frames
+    outputfile = sys._getframe().f_code.co_name + ".mp4"
+
+    outputdata = np.random.random(size=(5, 16, 16, 3)) * 255
+    outputdata = outputdata.astype(np.uint8)
+
+    with skvideo.io.LibAVWriter(outputfile) as writer:
+        for i in range(5):
+            writer.writeFrame(outputdata[i])
+
+    with skvideo.io.LibAVReader(outputfile,inputdict={'-r':'25'}, outputdict={'-r':'50'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,9)
+    with skvideo.io.LibAVReader(outputfile,inputdict={'-r':'25'}, outputdict={'-r':'25'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,5)
+    with skvideo.io.LibAVReader(outputfile,inputdict={'-r':'25'}, outputdict={'-r':'10'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,3)
     os.remove(outputfile)

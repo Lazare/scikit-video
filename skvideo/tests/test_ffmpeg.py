@@ -91,6 +91,52 @@ def test_FFmpegReader_16bits():
     assert_equal(accumulation / (T * M * N * C), 108.65935203269676)
 
 @unittest.skipIf(not skvideo._HAS_FFMPEG, "FFmpeg required for this test.")
+def test_FFmpegReader_streams_hls():
+
+    T = 0
+    M = 0
+    N = 0
+    C = 0
+    accumulation = 0
+    with skvideo.io.FFmpegReader('http://184.72.239.149/vod/smil:BigBuckBunny.smil/playlist.m3u8', outputdict={'-vframes':'100'}, verbosity=0) as reader:
+        for frame in reader.nextFrame():
+            M, N, C = frame.shape
+            accumulation += np.sum(frame)
+            T += 1
+
+    # check the dimensions of the video
+    assert_equal(T, 100)
+    assert_equal(M, 160)
+    assert_equal(N, 280)
+    assert_equal(C, 3)
+
+    # check the numbers
+    assert_equal(accumulation / (T * M * N * C), 24.4243703125)
+
+@unittest.skipIf(not skvideo._HAS_FFMPEG, "FFmpeg required for this test.")
+def test_FFmpegReader_streams_rtmp():
+
+    T = 0
+    M = 0
+    N = 0
+    C = 0
+    accumulation = 0
+    with skvideo.io.FFmpegReader('rtmp://184.72.239.149/vod/mp4:bigbuckbunny_450.mp4', outputdict={'-vframes':'50'}, verbosity=0) as reader:
+        for frame in reader.nextFrame():
+            M, N, C = frame.shape
+            accumulation += np.sum(frame)
+            T += 1
+
+    # check the dimensions of the video
+    assert_equal(T, 50)
+    assert_equal(M, 180)
+    assert_equal(N, 320)
+    assert_equal(C, 3)
+
+    # check the numbers
+    assert_equal(accumulation / (T * M * N * C), 66.1231400462963)
+
+@unittest.skipIf(not skvideo._HAS_FFMPEG, "FFmpeg required for this test.")
 def test_FFmpegWriter():
     # generate random data for 5 frames
     outputfile = sys._getframe().f_code.co_name + ".mp4"
@@ -101,4 +147,44 @@ def test_FFmpegWriter():
     with skvideo.io.FFmpegWriter(outputfile) as writer:
         for i in range(5):
             writer.writeFrame(outputdata[i])
+    os.remove(outputfile)
+
+@unittest.skipIf(not skvideo._HAS_FFMPEG, "FFmpeg required for this test.")
+def test_FFMpegReader_limit_vframe():
+    # generate random data for 5 frames
+    outputfile = sys._getframe().f_code.co_name + ".mp4"
+
+    outputdata = np.random.random(size=(5, 16, 16, 3)) * 255
+    outputdata = outputdata.astype(np.uint8)
+
+    with skvideo.io.FFmpegWriter(outputfile) as writer:
+        for i in range(5):
+            writer.writeFrame(outputdata[i])
+
+    with skvideo.io.FFmpegReader(outputfile, outputdict={'-vframes':'8'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,5)
+    os.remove(outputfile)
+
+@unittest.skipIf(not skvideo._HAS_FFMPEG, "FFmpeg required for this test.")
+def test_FFMpegReader_raw_fps():
+    # generate random data for 5 frames
+    outputfile = sys._getframe().f_code.co_name + ".mp4"
+
+    outputdata = np.random.random(size=(5, 16, 16, 3)) * 255
+    outputdata = outputdata.astype(np.uint8)
+
+    with skvideo.io.FFmpegWriter(outputfile) as writer:
+        for i in range(5):
+            writer.writeFrame(outputdata[i])
+
+    with skvideo.io.FFmpegReader(outputfile,inputdict={'-r':'25'}, outputdict={'-r':'50'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,10)
+    with skvideo.io.FFmpegReader(outputfile,inputdict={'-r':'25'}, outputdict={'-r':'25'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,6)
+    with skvideo.io.FFmpegReader(outputfile,inputdict={'-r':'25'}, outputdict={'-r':'10'}, verbosity=0) as reader:
+        T,M,N,C = reader.getShape()
+    assert_equal(T,4)
     os.remove(outputfile)

@@ -11,7 +11,7 @@ import subprocess as sp
 
 import numpy as np
 
-from .abstract import VideoReaderAbstract, VideoWriterAbstract
+from .abstract import VideoReaderAbstract, VideoWriterAbstract, dict2Args
 from .ffprobe import ffprobe
 from .. import _FFMPEG_APPLICATION
 from .. import _FFMPEG_PATH
@@ -48,8 +48,8 @@ class FFmpegReader(VideoReaderAbstract):
         if '-vcodec' not in outputdict:
             outputdict['-vcodec'] = "rawvideo"
 
-        iargs = self._dict2Args(inputdict)
-        oargs = self._dict2Args(outputdict)
+        iargs = dict2Args(inputdict)
+        oargs = dict2Args(outputdict)
 
         if verbosity > 0:
             cmd = [_FFMPEG_PATH + "/" + _FFMPEG_APPLICATION] + iargs + ['-i', self._filename] + oargs + ['-']
@@ -95,8 +95,8 @@ class FFmpegWriter(VideoWriterAbstract):
         return _FFMPEG_SUPPORTED_ENCODERS
 
     def _createProcess(self, inputdict, outputdict, verbosity):
-        iargs = self._dict2Args(inputdict)
-        oargs = self._dict2Args(outputdict)
+        iargs = dict2Args(inputdict)
+        oargs = dict2Args(outputdict)
 
         cmd = [_FFMPEG_PATH + "/" + _FFMPEG_APPLICATION, "-y"] + iargs + ["-i", "-"] + oargs + [self._filename]
 
